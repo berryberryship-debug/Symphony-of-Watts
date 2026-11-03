@@ -2,88 +2,63 @@ import numpy as np
 from scipy.io import wavfile
 import os
 
-# Importation de ton architecture modulaire
-from core.state_tensor import EtatVibroAcoustique
-from core.doppler import appliquer_doppler
 from core.f0_yin import extraire_f0_yin
-from core.coupling_matrix import creer_couplage_kuramoto
-from core.harmonic_resolution import generer_grille_pentatonique, projeter_sur_grille
-from core.synthesis import synthetiser
+from core.harmonisation import resoudre_intervalle_continu
+from core.pitch_shifter import transposer_audio_brut
 
-def generer_signal_moteur_brut(f_whine, duree, fs):
-    """Génère un faux signal de moteur pour simuler l'entrée YIN."""
+def generer_moteur_brut(f_base, duree, fs):
     t = np.linspace(0, duree, int(fs * duree), endpoint=False)
-    # Bruit + sifflement
-    bruit = np.random.normal(0, 0.1, len(t))
-    signal = 0.8 * np.sin(2 * np.pi * f_whine * t) + bruit
-    return signal
+    # On génère un son complexe (fondamentale + harmoniques + bruit)
+    signal = (0.6 * np.sin(2 * np.pi * f_base * t) 
+              + 0.3 * np.sin(2 * np.pi * f_base * 2 * t)
+              + 0.1 * np.sin(2 * np.pi * f_base * 3 * t)
+              + 0.2 * np.random.normal(0, 1, len(t)))
+    return signal / np.max(np.abs(signal))
 
 def main():
-    print("🚗 Initialisation de la scène Symphony of Watts...")
+    print("🚗 Initialisation du Transducteur (Logique Cents)...")
     fs = 44100
     duree = 3.0
     
-    # 1. SIMULATION DES DEUX VOITURES (Signaux bruts)
-    # Voiture A (ex: 3150 Hz) et Voiture B (ex: 3500 Hz)
-    sig_A_brut = generer_signal_moteur_brut(3150.0, duree, fs)
-    sig_B_brut = generer_signal_moteur_brut(3500.0, duree, fs)
+    # Fréquences impures : A=445 Hz, B=460 Hz (Dissonant)
+    f_A_brut = 445.0 
+    f_B_brut = 460.0 
     
-    # 2. ANALYSE YIN (Extraction de la fréquence fondamentale)
-    res_A = extraire_f0_yin(sig_A_brut, fs, f_min=1000, f_max=8000)
-    res_B = extraire_f0_yin(sig_B_brut, fs, f_min=1000, f_max=8000)
+    print(f" -> Bruits bruts : A={f_A_brut} Hz, B={f_B_brut} Hz")
+    sig_A = generer_moteur_brut(f_A_brut, duree, fs)
+    sig_B = generer_moteur_brut(f_B_brut, duree, fs)
+    
+    res_A = extraire_f0_yin(sig_A, fs, f_min=100, f_max=1000)
+    res_B = extraire_f0_yin(sig_B, fs, f_min=100, f_max=1000)
     
     if not res_A or not res_B:
-        print("❌ Impossible d'extraire la fréquence fondamentale.")
+        print("❌ Échec de l'extraction YIN.")
         return
         
-    f_A = res_A[0]
-    f_B = res_B[0]
-    print(f"  -> Voiture A détectée à {f_A:.2f} Hz (Confiance : {res_A[1]:.2f})")
-    print(f"  -> Voiture B détectée à {f_B:.2f} Hz (Confiance : {res_B[1]:.2f})")
+    f_A_detecte = res_A[0]
+    f_B_detecte = res_B[0]
     
-    # 3. PROJECTION HARMONIQUE (Grille pentatonique basée sur A)
-    grille = generer_grille_pentatonique(tonique=f_A, n_octaves=3)
+    print("\n🧠 Résolution harmonique continue :")
+    f_A_cible, f_B_cible, cout = resoudre_intervalle_continu(f_A_detecte, f_B_detecte)
     
-    # On regroupe les deux fréquences pour les projeter ensemble
-    freqs_initiales = np.array([f_A, f_B])
-    amps_initiales = np.array([1.0, 0.8])
+    print(f"   -> A reste à {f_A_cible:.2f} Hz (Coût : 0 cents)")
+    print(f"   -> B transposée à {f_B_cible:.2f} Hz (Coût : {cout:.2f} cents)")
     
-    freqs_harmoniques, deltas, cout = projeter_sur_grille(
-        freqs_initiales, amps_initiales, grille, max_cents=100.0
-    )
-    print(f"  -> Fréquences projetées : {freqs_harmoniques[0]:.2f} Hz et {freqs_harmoniques[1]:.2f} Hz (Coût : {cout:.2f} cents)")
+    # Application du Pitch Shifting sur le VRAI son de B
+    print("\n🎛️  Transposition audio (STFT)...")
+    ratio_B = f_B_cible / f_B_detecte
+    sig_B_accorde = transposer_audio_brut(sig_B, ratio_B, fs)
     
-    # 4. COUPLAGE KURAMOTO (Les voitures interagissent)
-    # On crée une matrice d'interaction (les deux oscillateurs se synchronisent)
-    kappa = creer_couplage_kuramoto(N=2, force=5.0, topologie="all_to_all")
+    # La voiture A reste inchangée
+    signal_stereo = np.stack([sig_A, sig_B_accorde], axis=1)
     
-    # 5. CRÉATION DE L'ÉTAT VIBROACOUSTIQUE (Tenseur protégé)
-    etat = EtatVibroAcoustique(
-        temps=0.0,
-        frequences=freqs_harmoniques,
-        amplitudes=amps_initiales,
-        phases=np.array([0.0, 0.0]),
-        couplages_kappa=kappa,
-        domaine_physique="ACOUSTIQUE"
-    )
-    
-    # 6. SYNTHÈSE AUDIO FINALE
-    print("\n🎵 Synthèse audio en cours (couplage Kuramoto)...")
-    signal_stereo, phases_finales = synthetiser(
-        freqs=etat.frequences,
-        amps=etat.amplitudes,
-        phases=etat.phases,
-        kappa=etat.couplages_kappa,
-        duree=duree,
-        fs=fs,
-        appliquer_resolution=False, # Déjà fait manuellement à l'étape 3
-        tonique=f_A
-    )
-    
-    # Sauvegarde
-    nom_fichier = "symphony_of_watts_demo.wav"
+    max_val = np.max(np.abs(signal_stereo))
+    if max_val > 0:
+        signal_stereo = signal_stereo / max_val * 0.9
+        
+    nom_fichier = "/data/data/com.termux/files/home/storage/downloads/symphony_continu.wav"
     wavfile.write(nom_fichier, fs, np.int16(signal_stereo * 32767))
-    print(f"✅ Fichier généré : {nom_fichier}")
+    print(f"\n✅ Fichier généré : symphony_continu.wav")
 
 if __name__ == "__main__":
     main()
