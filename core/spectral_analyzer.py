@@ -9,6 +9,12 @@ def analyser_spectre(signal: np.ndarray, fs: int, n_pics_max: int = 100):
     """
     Extrait les N fréquences dominantes, leurs amplitudes et leurs phases.
     """
+    if signal.size == 0:
+        raise ValueError("Le signal ne peut pas être vide.")
+
+    if not np.all(np.isfinite(signal)):
+        raise ValueError("Le signal contient des valeurs non finies.")
+
     N = len(signal)
     window = np.hanning(N)
     signal_windowed = signal * window
