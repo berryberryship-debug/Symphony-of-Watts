@@ -62,8 +62,11 @@ def extraire_f0_yin(
         raise TypeError("Le signal doit contenir des valeurs réelles.")
     if not np.all(np.isfinite(sig)):
         raise ValueError("Le signal contient des valeurs non finies.")
-    if type(fs) is not int or fs <= 0:
+    
+    # CORRECTION : Accepte les entiers Python et NumPy (ex: scipy.io.wavfile)
+    if not isinstance(fs, (int, np.integer)) or fs <= 0:
         raise TypeError("fs doit être un entier strictement positif.")
+        
     if not (np.isfinite(f_min) and np.isfinite(f_max) and 0.0 < f_min < f_max < fs / 2.0):
         raise ValueError("Bornes fréquentielles invalides (doivent respecter Nyquist).")
     if not (0.0 < seuil <= 1.0):
@@ -85,4 +88,39 @@ def extraire_f0_yin(
 
     # --- Différence au carré ---
     diff = np.zeros(lag_max + 1, dtype=float)
-    for tau in range(1,
+    for tau in range(1, lag_max + 1):
+        delta = sig[:W] - sig[tau:tau+W]
+        diff[tau] = np.sum(delta ** 2)
+
+    # --- CMNDF ---
+    cmndf = np.ones(lag_max + 1, dtype=float)
+    running_sum = 0.0
+    for tau in range(1, lag_max + 1):
+        running_sum += diff[tau]
+        if running_sum == 0.0:
+            cmndf[tau] = 1.0
+        else:
+            cmndf[tau] = diff[tau] * tau / running_sum
+
+    # --- Recherche du minimum ---
+    tau_estime = -1
+    for tau in range(lag_min, lag_max):
+        if cmndf[tau] < seuil:
+            while tau + 1 < lag_max and cmndf[tau + 1] < cmndf[tau]:
+                tau += 1
+            tau_estime = tau
+            break
+
+    if tau_estime == -1:
+        tau_estime = np.argmin(cmndf[lag_min:lag_max]) + lag_min
+        confiance = max(0.0, 1.0 - cmndf[tau_estime])
+        if confiance < 0.5:
+            return None
+    else:
+        confiance = max(0.0, 1.0 - cmndf[tau_estime])
+
+    # --- Interpolation sub-échantillon ---
+    tau_precis = _interpole_parabole(cmndf, tau_estime)
+    f0 = fs / tau_precis
+
+    return (float(f0), float(confiance))
