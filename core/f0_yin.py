@@ -8,11 +8,9 @@ Conçu pour être utilisé dans un pipeline industriel :
 - retour explicite (f0, confiance) ou None
 - bornes de recherche respectant strictement Nyquist
 """
-
 from __future__ import annotations
 import numpy as np
 from typing import Optional, Tuple
-
 
 def _interpole_parabole(array: np.ndarray, idx: int) -> float:
     """Interpolation parabolique sub-échantillon."""
@@ -24,7 +22,6 @@ def _interpole_parabole(array: np.ndarray, idx: int) -> float:
         return float(idx)
     return idx + 0.5 * (alpha - gamma) / denom
 
-
 def extraire_f0_yin(
     sig: np.ndarray,
     fs: int,
@@ -35,25 +32,7 @@ def extraire_f0_yin(
 ) -> Optional[Tuple[float, float]]:
     """
     Estime la fréquence fondamentale d'un signal mono.
-
-    Parameters
-    ----------
-    sig : np.ndarray
-        Signal 1D réel.
-    fs : int
-        Fréquence d'échantillonnage (Hz), entier strictement positif.
-    f_min, f_max : float
-        Bornes de recherche (doivent respecter 0 < f_min < f_max < fs/2).
-    seuil : float
-        Seuil absolu sur la CMNDF (plus bas = plus strict).
-    seuil_rms : float
-        Plancher d'énergie. En dessous, le signal est considéré comme silence.
-
-    Returns
-    -------
-    Optional[Tuple[float, float]]
-        (f0_hz, confiance) où confiance ∈ [0, 1],
-        ou None si aucune fondamentale fiable n'a été trouvée.
+    Retourne (f0_hz, confiance) ou (np.nan, 0.0) si échec.
     """
     # --- Validations strictes ---
     if not isinstance(sig, np.ndarray) or sig.ndim != 1:
@@ -62,11 +41,8 @@ def extraire_f0_yin(
         raise TypeError("Le signal doit contenir des valeurs réelles.")
     if not np.all(np.isfinite(sig)):
         raise ValueError("Le signal contient des valeurs non finies.")
-    
-    # CORRECTION : Accepte les entiers Python et NumPy (ex: scipy.io.wavfile)
-    if not isinstance(fs, (int, np.integer)) or fs <= 0:
+    if not isinstance(fs, (int, np.integer)) or isinstance(fs, bool) or fs <= 0:
         raise TypeError("fs doit être un entier strictement positif.")
-        
     if not (np.isfinite(f_min) and np.isfinite(f_max) and 0.0 < f_min < f_max < fs / 2.0):
         raise ValueError("Bornes fréquentielles invalides (doivent respecter Nyquist).")
     if not (0.0 < seuil <= 1.0):
@@ -77,14 +53,15 @@ def extraire_f0_yin(
     # --- Prétraitement ---
     sig = sig.astype(float) - np.mean(sig)
     rms = np.sqrt(np.mean(sig ** 2))
+    
     if rms < seuil_rms:
-        return None
+        return (np.nan, 0.0)
 
     lag_min = max(1, int(np.ceil(fs / f_max)))
     lag_max = int(np.floor(fs / f_min))
     W = len(sig) // 2
     if lag_max >= W or lag_min >= lag_max:
-        return None
+        return (np.nan, 0.0)
 
     # --- Différence au carré ---
     diff = np.zeros(lag_max + 1, dtype=float)
@@ -115,12 +92,11 @@ def extraire_f0_yin(
         tau_estime = np.argmin(cmndf[lag_min:lag_max]) + lag_min
         confiance = max(0.0, 1.0 - cmndf[tau_estime])
         if confiance < 0.5:
-            return None
+            return (np.nan, 0.0)
     else:
         confiance = max(0.0, 1.0 - cmndf[tau_estime])
 
     # --- Interpolation sub-échantillon ---
     tau_precis = _interpole_parabole(cmndf, tau_estime)
     f0 = fs / tau_precis
-
     return (float(f0), float(confiance))
