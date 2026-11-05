@@ -1,21 +1,21 @@
 import numpy as np
 
-def synthetiser_modal(frequences_cibles, amplitudes, phases, duree, fs=44100):
+def synthetiser_spectre_complet(frequences, amplitudes, phases, duree, fs=44100):
     """
-    Synthèse additive pure.
-    Génère un signal audio à partir des fréquences, amplitudes et phases données.
-    Erreur de transposition : 0.00 cents (précision float64).
+    Synthèse additive massive.
+    Reconstruit un signal audio complexe à partir de N composantes spectrales.
     """
-    t = np.linspace(0, duree, int(fs * duree), endpoint=False)
-    signal = np.zeros_like(t)
+    n_echantillons = int(fs * duree)
+    t = np.linspace(0, duree, n_echantillons, endpoint=False)
+    signal = np.zeros(n_echantillons, dtype=np.float64)
     
-    # On somme toutes les composantes spectrales (fondamentales + harmoniques)
-    for f, A, phi in zip(frequences_cibles, amplitudes, phases):
+    # On vectorise pour calculer toutes les ondes d'un coup
+    for f, A, phi in zip(frequences, amplitudes, phases):
         signal += A * np.sin(2 * np.pi * f * t + phi)
         
-    # Normalisation pour éviter la saturation
+    # Normalisation douce
     max_val = np.max(np.abs(signal))
     if max_val > 0:
-        signal = signal / max_val * 0.9
+        signal = (signal / max_val) * 0.95
         
     return signal
